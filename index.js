@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const path = require('path');
 const createShoppingRouter = require('./src/routes/shoppingRoutes');
 
 // Environment variables
@@ -18,13 +19,19 @@ const app = express();
 
 // Middleware
 app.use(express.json());
+app.use(express.static(path.join(__dirname, 'public')));
 
 // Routes
 const shoppingRouter = createShoppingRouter(NAVER_CLIENT_ID, NAVER_CLIENT_SECRET);
 app.use('/api/shopping', shoppingRouter);
 
-// Root route
+// Root route - redirect to static HTML page
 app.get('/', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// API info route
+app.get('/api', (req, res) => {
   res.json({
     message: 'Naver Shopping API Test Server',
     endpoints: {
