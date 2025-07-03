@@ -184,22 +184,30 @@ class APIStartDateUpdater {
             // 기존 API 업데이트 파일 확인
             const existingApiFile = await this.findLatestOutputFile();
             if (existingApiFile) {
-                console.log(`📁 기존 API 업데이트 파일 사용: ${existingApiFile}`);
+                console.log(`📁 기존 API 업데이트 파일 발견: ${existingApiFile}`);
                 inputFilePath = existingApiFile;
             }
             
             // 출력 파일 경로 설정
             if (!outputFilePath) {
-                const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-                outputFilePath = `output/naver_series_api_updated_${timestamp}.json`;
+                if (existingApiFile) {
+                    // 기존 파일이 있으면 같은 파일에 이어서 저장
+                    outputFilePath = existingApiFile;
+                    console.log(`📁 기존 파일에 이어서 저장: ${outputFilePath}`);
+                } else {
+                    // 새 파일 생성
+                    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+                    outputFilePath = `output/naver_series_api_updated_${timestamp}.json`;
+                    console.log(`📁 새 파일 생성: ${outputFilePath}`);
+                }
             }
-            console.log(`📁 출력 파일: ${outputFilePath}`);
 
             // 입력 파일 읽기
             const inputData = JSON.parse(await fs.readFile(inputFilePath, 'utf8'));
+            const allNovels = inputData.detailedNovels;
             
             // 작가명이 있는 작품 중 연재 시작일이 여전히 null인 작품들 필터링
-            const validAuthorNovels = inputData.detailedNovels.filter(novel => 
+            const validAuthorNovels = allNovels.filter(novel => 
                 novel["작가명"] !== null && (
                     novel["연재 시작일"] === null || 
                     novel["연재 시작일"] === undefined || 
@@ -207,27 +215,98 @@ class APIStartDateUpdater {
                 )
             );
             
+            // 기존 파일에서 마지막 처리된 작품 찾기
+            let resumeFromIndex = 0;
+            if (existingApiFile) {
+                console.log(`\n🔍 기존 처리 결과 확인 중...`);
+                
+                // 이미 연재 시작일이 업데이트된 작품들 찾기
+                const updatedNovels = allNovels.filter(novel => 
+                    novel["작가명"] !== null && 
+                    novel["연재 시작일"] !== null && 
+                    novel["연재 시작일"] !== undefined && 
+                    novel["연재 시작일"] !== '' &&
+                    novel["API_총화수"] !== undefined // API로 업데이트된 작품 표시
+                );
+                
+                if (updatedNovels.length > 0) {
+                    // 마지막으로 API 업데이트된 작품 ID 찾기
+                    const lastUpdatedNovel = updatedNovels[updatedNovels.length - 1];
+                    const lastUpdatedId = lastUpdatedNovel["작품ID"];
+                    
+                    console.log(`📍 마지막 API 업데이트된 작품: ${lastUpdatedNovel["제목"]} (ID: ${lastUpdatedId})`);
+                    
+                    // validAuthorNovels에서 해당 ID 다음부터 시작
+                    const lastProcessedIndex = validAuthorNovels.findIndex(novel => novel["작품ID"] === lastUpdatedId);
+                    if (lastProcessedIndex !== -1) {
+                        resumeFromIndex = lastProcessedIndex + 1;
+                        console.log(`✅ 인덱스 ${lastProcessedIndex}까지 API 업데이트 완료`);
+                        console.log(`🔄 인덱스 ${resumeFromIndex}부터 재시작`);
+                    } else {
+                        console.log(`⚠️  마지막 처리된 작품을 업데이트 대상에서 찾을 수 없습니다.`);
+                    }
+                    
+                    console.log(`📊 기존 API 업데이트 완료: ${updatedNovels.length}개`);
+                }
+            }
+            
             console.log(`\n📊 === 업데이트 대상 통계 ===`);
-            console.log(`전체 작품 수: ${inputData.detailedNovels.length.toLocaleString()}개`);
+            console.log(`전체 작품 수: ${allNovels.length.toLocaleString()}개`);
             console.log(`업데이트 대상 작품 수: ${validAuthorNovels.length.toLocaleString()}개`);
-            console.log(`시작 인덱스: ${startIndex}`);
+            console.log(`시작 인덱스: ${resumeFromIndex}`);
             
             // 시작 인덱스부터 처리
-            const targetNovels = validAuthorNovels.slice(startIndex);
+            const targetNovels = validAuthorNovels.slice(resumeFromIndex);
             console.log(`실제 처리 대상: ${targetNovels.length.toLocaleString()}개`);
             
+            if (targetNovels.length === 0) {
+                console.log(`\n🎉 모든 작품이 이미 API 업데이트 완료되었습니다!`);
+                return allNovels;
+            }
+            
             // 결과 저장용 배열 (기존 데이터 복사)
-            let updatedNovels = [...inputData.detailedNovels];
+            let updatedNovels = [...allNovels];
+            
+            // 진행률 추적 변수
+            const startTime = Date.now();
+            let processedCount = 0;
+            const totalTarget = targetNovels.length;
             
             // 배치 단위로 처리
             for (let i = 0; i < targetNovels.length; i += batchSize) {
                 const batch = targetNovels.slice(i, Math.min(i + batchSize, targetNovels.length));
-                const currentBatchStart = startIndex + i + 1;
-                const currentBatchEnd = startIndex + Math.min(i + batchSize, targetNovels.length);
+                const currentBatchStart = resumeFromIndex + i + 1;
+                const currentBatchEnd = resumeFromIndex + Math.min(i + batchSize, targetNovels.length);
                 
-                console.log(`\n📦 === 배치 처리: ${currentBatchStart} ~ ${currentBatchEnd} ===`);
+                console.log(`\n📦 === 배치 처리: ${currentBatchStart} ~ ${currentBatchEnd} (전체 ${validAuthorNovels.length}개 중) ===`);
+                
+                // 진행률 계산
+                const overallProgress = (((resumeFromIndex + i) / validAuthorNovels.length) * 100).toFixed(2);
+                const currentBatchProgress = ((processedCount / totalTarget) * 100).toFixed(2);
+                
+                console.log(`📈 전체 진행률: ${overallProgress}% | 현재 세션: ${currentBatchProgress}%`);
+                
+                // 진행 바 표시
+                const progressBarLength = 30;
+                const filledLength = Math.round((processedCount / totalTarget) * progressBarLength);
+                const progressBar = '█'.repeat(filledLength) + '░'.repeat(progressBarLength - filledLength);
+                console.log(`[${progressBar}] ${processedCount}/${totalTarget}`);
+                
+                // 예상 완료 시간 계산
+                if (processedCount > 0) {
+                    const elapsed = Date.now() - startTime;
+                    const avgTimePerItem = elapsed / processedCount;
+                    const remaining = totalTarget - processedCount;
+                    const estimatedTimeLeft = (remaining * avgTimePerItem);
+                    const estimatedFinish = new Date(Date.now() + estimatedTimeLeft);
+                    
+                    console.log(`⏱️  평균 처리 시간: ${(avgTimePerItem / 1000).toFixed(1)}초/개`);
+                    console.log(`🕒 예상 완료 시간: ${estimatedFinish.toLocaleString('ko-KR')}`);
+                    console.log(`⏰ 남은 시간: ${this.formatTime(estimatedTimeLeft)}`);
+                }
 
                 // 배치 내 순차 처리
+                let batchSuccessCount = 0;
                 for (let j = 0; j < batch.length; j++) {
                     const novel = batch[j];
                     const updatedNovel = await this.updateNovelStartDate(novel);
@@ -236,7 +315,18 @@ class APIStartDateUpdater {
                     const originalIndex = updatedNovels.findIndex(n => n["작품ID"] === novel["작품ID"]);
                     if (originalIndex !== -1) {
                         updatedNovels[originalIndex] = updatedNovel;
+                        
+                        // 성공한 경우만 카운트
+                        if (updatedNovel["연재 시작일"] !== null && updatedNovel["연재 시작일"] !== undefined) {
+                            batchSuccessCount++;
+                        }
                     }
+                    
+                    processedCount++;
+                    
+                    // 개별 작품 처리 진행률 표시
+                    const itemProgress = ((processedCount / totalTarget) * 100).toFixed(1);
+                    console.log(`   ✅ ${processedCount}/${totalTarget} (${itemProgress}%) - ${novel["제목"]}`);
                     
                     // 요청 간 딜레이
                     if (j < batch.length - 1) {
@@ -244,38 +334,76 @@ class APIStartDateUpdater {
                     }
                 }
 
+                console.log(`\n📊 배치 완료: ${batchSuccessCount}/${batch.length} 성공`);
+
                 // 중간 저장
                 const outputData = {
                     collectionSummary: {
                         ...inputData.collectionSummary,
                         apiUpdateDate: new Date().toISOString(),
-                        apiUpdatedCount: startIndex + i + batch.length,
+                        apiUpdatedCount: resumeFromIndex + i + batch.length,
                         apiTotalUpdateTarget: validAuthorNovels.length,
-                        apiUpdateProgress: `${(((startIndex + i + batch.length) / validAuthorNovels.length) * 100).toFixed(2)}%`
+                        apiUpdateProgress: `${(((resumeFromIndex + i + batch.length) / validAuthorNovels.length) * 100).toFixed(2)}%`,
+                        apiProcessedInSession: processedCount,
+                        apiSessionProgress: `${((processedCount / totalTarget) * 100).toFixed(2)}%`
                     },
                     detailedNovels: updatedNovels
                 };
 
                 await fs.writeFile(outputFilePath, JSON.stringify(outputData, null, 2), 'utf8');
                 
-                const progress = (((startIndex + i + batch.length) / validAuthorNovels.length) * 100).toFixed(2);
-                console.log(`💾 중간 저장 완료: ${startIndex + i + batch.length}/${validAuthorNovels.length} (${progress}%)`);
+                const saveProgress = (((resumeFromIndex + i + batch.length) / validAuthorNovels.length) * 100).toFixed(2);
+                console.log(`💾 중간 저장 완료: ${resumeFromIndex + i + batch.length}/${validAuthorNovels.length} (${saveProgress}%)`);
 
                 // 배치 간 딜레이
                 if (i + batchSize < targetNovels.length) {
-                    console.log(`⏱️  ${this.delay * 2}ms 대기 중...`);
-                    await this.sleep(this.delay * 2);
+                    const waitTime = this.delay * 2;
+                    console.log(`⏱️  ${waitTime}ms 대기 중...`);
+                    await this.sleep(waitTime);
                 }
             }
 
+            // 최종 통계
+            const endTime = Date.now();
+            const totalTime = endTime - startTime;
+            const successCount = updatedNovels.filter(novel => 
+                novel["작가명"] !== null && 
+                novel["연재 시작일"] !== null && 
+                novel["연재 시작일"] !== undefined && 
+                novel["연재 시작일"] !== '' &&
+                novel["API_총화수"] !== undefined
+            ).length;
+
             console.log(`\n🎉 === API 업데이트 완료 ===`);
-            console.log(`결과 파일: ${outputFilePath}`);
+            console.log(`📊 세션 통계:`);
+            console.log(`   - 처리된 작품: ${processedCount}개`);
+            console.log(`   - 총 소요 시간: ${this.formatTime(totalTime)}`);
+            console.log(`   - 평균 처리 시간: ${(totalTime / processedCount / 1000).toFixed(1)}초/개`);
+            console.log(`📊 전체 통계:`);
+            console.log(`   - API 업데이트 완료: ${successCount}개`);
+            console.log(`   - 전체 대비 완료율: ${((successCount / validAuthorNovels.length) * 100).toFixed(2)}%`);
+            console.log(`📁 결과 파일: ${outputFilePath}`);
             
             return updatedNovels;
 
         } catch (error) {
             console.error('❌ API 업데이트 중 오류 발생:', error);
             throw error;
+        }
+    }
+
+    // 시간 형식 변환 함수
+    formatTime(milliseconds) {
+        const seconds = Math.floor(milliseconds / 1000);
+        const minutes = Math.floor(seconds / 60);
+        const hours = Math.floor(minutes / 60);
+        
+        if (hours > 0) {
+            return `${hours}시간 ${minutes % 60}분 ${seconds % 60}초`;
+        } else if (minutes > 0) {
+            return `${minutes}분 ${seconds % 60}초`;
+        } else {
+            return `${seconds}초`;
         }
     }
 }
