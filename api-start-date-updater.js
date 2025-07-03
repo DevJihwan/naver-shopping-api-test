@@ -175,6 +175,21 @@ class APIStartDateUpdater {
         }
     }
 
+    // 시간 형식 변환 함수
+    formatTime(milliseconds) {
+        const seconds = Math.floor(milliseconds / 1000);
+        const minutes = Math.floor(seconds / 60);
+        const hours = Math.floor(minutes / 60);
+        
+        if (hours > 0) {
+            return `${hours}시간 ${minutes % 60}분 ${seconds % 60}초`;
+        } else if (minutes > 0) {
+            return `${minutes}분 ${seconds % 60}초`;
+        } else {
+            return `${seconds}초`;
+        }
+    }
+
     // 메인 업데이트 함수
     async updateStartDates(inputFilePath, outputFilePath = null, startIndex = 0, batchSize = 10) {
         try {
@@ -389,21 +404,6 @@ class APIStartDateUpdater {
         } catch (error) {
             console.error('❌ API 업데이트 중 오류 발생:', error);
             throw error;
-        }
-    }
-
-    // 시간 형식 변환 함수
-    formatTime(milliseconds) {
-        const seconds = Math.floor(milliseconds / 1000);
-        const minutes = Math.floor(seconds / 60);
-        const hours = Math.floor(minutes / 60);
-        
-        if (hours > 0) {
-            return `${hours}시간 ${minutes % 60}분 ${seconds % 60}초`;
-        } else if (minutes > 0) {
-            return `${minutes}분 ${seconds % 60}초`;
-        } else {
-            return `${seconds}초`;
         }
     }
 }
