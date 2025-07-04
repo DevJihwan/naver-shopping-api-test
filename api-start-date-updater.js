@@ -55,12 +55,36 @@ class APIStartDateUpdater {
                         startDate = date.toISOString().split('T')[0];
                     }
                     
-                    // 완결 여부 판단
+                    // 완결 여부 판단 (정확한 로직)
                     let terminationStatus = null;
-                    if (lastVolume.termination !== undefined) {
-                        terminationStatus = lastVolume.termination ? '완결' : '연재중';
-                    } else if (lastVolume.terminationYn !== undefined) {
-                        terminationStatus = lastVolume.terminationYn === 'Y' ? '완결' : '연재중';
+                    
+                    // 1. 마지막 볼륨의 newVolume 필드로 판단 (가장 정확한 방법)
+                    if (lastVolume.newVolume === true) {
+                        terminationStatus = '연재중';
+                    } else if (lastVolume.newVolume === false) {
+                        // 2. freeYn 필드로 추가 확인
+                        if (lastVolume.freeYn === 'Y') {
+                            terminationStatus = '완결';
+                        } else {
+                            // 3. 전체 볼륨이 무료인지 확인 (완결작은 모든 화가 무료)
+                            const allFreeVolumes = volumes.filter(v => v.freeYn === 'Y').length;
+                            const freeRatio = allFreeVolumes / volumes.length;
+                            
+                            if (freeRatio > 0.8) { // 80% 이상이 무료면 완결로 판단
+                                terminationStatus = '완결';
+                            } else {
+                                terminationStatus = '연재중';
+                            }
+                        }
+                    } else {
+                        // 4. newVolume 필드가 없는 경우 백업 로직
+                        if (lastVolume.termination === true) {
+                            terminationStatus = '완결';
+                        } else if (lastVolume.terminationYn === 'Y') {
+                            terminationStatus = '완결';
+                        } else {
+                            terminationStatus = '연재중';
+                        }
                     }
                     
                     console.log(`✅ API 응답 성공:`);
@@ -69,7 +93,9 @@ class APIStartDateUpdater {
                     console.log(`   완결 여부: ${terminationStatus}`);
                     console.log(`   첫 화 등록일: ${firstVolume.registerDate}`);
                     console.log(`   마지막 화 업데이트: ${lastVolume.lastVolumeUpdateDate}`);
-                    console.log(`   완결 플래그: ${lastVolume.termination}`);
+                    console.log(`   마지막 화 newVolume: ${lastVolume.newVolume}`);
+                    console.log(`   마지막 화 freeYn: ${lastVolume.freeYn}`);
+                    console.log(`   마지막 화 lendingFree: ${lastVolume.lendingFree}`);
                     
                     return {
                         "연재 시작일": startDate,
